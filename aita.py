@@ -274,12 +274,11 @@ CHROME      = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CHROME_DIR  = Path.home() / "Library/Application Support/Google/Chrome"
 PRESS_PROFILE = "AITA_Prensa"
 PRESS_URLS  = [
-    "https://www.elcorreo.com",
+    "https://12ft.io/proxy?q=https://www.elcorreo.com",
     "https://www.marca.com",
     "https://www.elconfidencial.com",
 ]
 PRESS_DOMAINS = [
-    "https://[*.]elcorreo.com:443,*",
     "https://[*.]marca.com:443,*",
     "https://[*.]elconfidencial.com:443,*",
 ]
@@ -287,27 +286,26 @@ PRESS_DOMAINS = [
 def _setup_press_profile() -> None:
     profile_dir = CHROME_DIR / PRESS_PROFILE
     prefs_path  = profile_dir / "Preferences"
-    if prefs_path.exists():
-        return  # ya configurado
-
-    profile_dir.mkdir(parents=True, exist_ok=True)
 
     js_exceptions = {
         domain: {"expiration": "0", "last_modified": "0", "model": 0, "setting": 2}
         for domain in PRESS_DOMAINS
     }
     prefs = {
-        "profile": {
-            "name": "AITA Prensa",
-            "using_default_name": False,
-        },
-        "content_settings": {
-            "exceptions": {
-                "javascript": js_exceptions
-            }
-        },
+        "profile": {"name": "AITA Prensa", "using_default_name": False},
+        "content_settings": {"exceptions": {"javascript": js_exceptions}},
     }
-    prefs_path.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
+    expected = json.dumps(prefs, indent=2)
+
+    if prefs_path.exists():
+        try:
+            if prefs_path.read_text(encoding="utf-8") == expected:
+                return
+        except Exception:
+            pass
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    prefs_path.write_text(expected, encoding="utf-8")
 
 
 def open_press() -> str:
@@ -567,7 +565,9 @@ DOT_R      = 10   # radio del punto de estado
 class AitaWindow(QWidget):
     def __init__(self):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint |
-                         Qt.WindowStaysOnTopHint | Qt.Tool)
+                         Qt.WindowStaysOnTopHint | Qt.Tool |
+                         Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
         import sys as _sys
         self._transparent = not (_sys.platform == "darwin" and _sys.version_info < (3, 10))
         if self._transparent:
@@ -603,6 +603,16 @@ class AitaWindow(QWidget):
         self.move(screen.right() - self.width() - 20,
                   screen.bottom() - self.height() - 20)
         self.show()
+
+        # macOS: evitar que la ventana se oculte cuando otra app toma el foco
+        if sys.platform == "darwin":
+            try:
+                from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+                NSApplication.sharedApplication().setActivationPolicy_(
+                    NSApplicationActivationPolicyAccessory
+                )
+            except Exception:
+                pass
 
     # ── Pintar ────────────────────────────────────────────────────────────────
     def paintEvent(self, _):
@@ -740,6 +750,8 @@ class AitaWindow(QWidget):
         self._set_color(C_DONE)
         self._bubble.show_response(text)
         self._reposition_bubble()
+        self.show()
+        self.raise_()
         QTimer.singleShot(1500, lambda: self._set_color(C_IDLE))
 
     def _on_error(self, err: str):
@@ -748,6 +760,8 @@ class AitaWindow(QWidget):
         self._listening = False
         self._bubble.show_response(f"Error: {err}")
         self._reposition_bubble()
+        self.show()
+        self.raise_()
 
     def _set_color(self, c: QColor):
         self._color = c
@@ -792,12 +806,18 @@ def _acquire_instance_lock() -> bool:
 def setup_autostart() -> None:
     plist_dir  = Path.home() / "Library/LaunchAgents"
     plist_path = plist_dir / "com.aita.app.plist"
+    script_dir = Path(__file__).resolve().parent
+    run_cmd    = script_dir / "run.command"
+
+    # Verificar si ya apunta al run.command correcto
     if plist_path.exists():
-        return
+        try:
+            if str(run_cmd) in plist_path.read_text(encoding="utf-8"):
+                return
+        except Exception:
+            pass
 
     plist_dir.mkdir(parents=True, exist_ok=True)
-    script = Path(__file__).resolve()
-    python = sys.executable
 
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -808,25 +828,29 @@ def setup_autostart() -> None:
     <string>com.aita.app</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{python}</string>
-        <string>{script}</string>
+        <string>/bin/bash</string>
+        <string>{run_cmd}</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>{script.parent}</string>
+    <string>{script_dir}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <false/>
     <key>StandardOutPath</key>
-    <string>{script.parent}/aita.log</string>
+    <string>{script_dir}/aita.log</string>
     <key>StandardErrorPath</key>
-    <string>{script.parent}/aita.log</string>
+    <string>{script_dir}/aita.log</string>
 </dict>
 </plist>
 """
     plist_path.write_text(plist, encoding="utf-8")
-    # bootstrap registra sin lanzar una segunda instancia inmediata en macOS 10.11+
     uid = os.getuid()
+    # Desregistrar versión anterior (si existía) y registrar la nueva
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}", str(plist_path)],
+        capture_output=True,
+    )
     subprocess.run(
         ["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)],
         capture_output=True,
