@@ -468,7 +468,9 @@ class BubbleWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window | Qt.FramelessWindowHint |
                          Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        import sys as _sys
+        if not (_sys.platform == "darwin" and _sys.version_info < (3, 10)):
+            self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(320)
         self._drag_pos = None
 
@@ -565,7 +567,10 @@ class AitaWindow(QWidget):
     def __init__(self):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint |
                          Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # Python 3.9 on macOS can fail to paint with TranslucentBackground
+        import sys as _sys
+        if not (_sys.platform == "darwin" and _sys.version_info < (3, 10)):
+            self.setAttribute(Qt.WA_TranslucentBackground)
 
         # Cargar imagen del personaje
         self._pixmap = QPixmap(str(_ICON_PATH)) if _ICON_PATH.exists() else QPixmap()
