@@ -33,5 +33,13 @@ if [ "$NEEDS_INSTALL" = "true" ]; then
     || "$PYTHON" -m pip install -q -r requirements.txt 2>/dev/null
 fi
 
+# ── Acceso directo en el Escritorio (solo la primera vez) ────────────────────
+AITA_DIR="$(cd "$(dirname "$0")" && pwd)"
+SHORTCUT="$HOME/Desktop/Abrir AITA.command"
+if [ ! -f "$SHORTCUT" ]; then
+    printf '#!/bin/bash\nexec "%s/run.command"\n' "$AITA_DIR" > "$SHORTCUT"
+    chmod +x "$SHORTCUT"
+fi
+
 # ── Lanzar AITA ───────────────────────────────────────────────────────────────
 exec "$PYTHON" aita.py

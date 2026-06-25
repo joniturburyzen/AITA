@@ -469,7 +469,8 @@ class BubbleWidget(QWidget):
         super().__init__(parent, Qt.Window | Qt.FramelessWindowHint |
                          Qt.WindowStaysOnTopHint | Qt.Tool)
         import sys as _sys
-        if not (_sys.platform == "darwin" and _sys.version_info < (3, 10)):
+        self._transparent = not (_sys.platform == "darwin" and _sys.version_info < (3, 10))
+        if self._transparent:
             self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(320)
         self._drag_pos = None
@@ -567,9 +568,9 @@ class AitaWindow(QWidget):
     def __init__(self):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint |
                          Qt.WindowStaysOnTopHint | Qt.Tool)
-        # Python 3.9 on macOS can fail to paint with TranslucentBackground
         import sys as _sys
-        if not (_sys.platform == "darwin" and _sys.version_info < (3, 10)):
+        self._transparent = not (_sys.platform == "darwin" and _sys.version_info < (3, 10))
+        if self._transparent:
             self.setAttribute(Qt.WA_TranslucentBackground)
 
         # Cargar imagen del personaje
@@ -608,6 +609,10 @@ class AitaWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        # En modo no-transparente (Python 3.9 macOS) limpiar fondo explícitamente
+        if not self._transparent:
+            p.fillRect(self.rect(), QColor(30, 30, 30, 220))
 
         # Pulso de escucha: halo de color alrededor del personaje
         if self._listening and self._pulse > 0:
