@@ -45,7 +45,7 @@ if _env.exists():
         load_dotenv(_env)
     except Exception:
         pass
-API_KEY        = os.getenv("GEMINI_API_KEY") or "AIzaSyBT4Ab9uabmtcZSZmK2xs6C5QwGic_dj1A"
+API_KEY        = os.getenv("GEMINI_API_KEY", "")
 MODEL          = "gemini-2.5-flash"
 SHORTCUTS_FILE = Path(__file__).parent / "shortcuts.json"
 MEMORY_FILE    = Path(__file__).parent / "memory.json"
