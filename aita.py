@@ -48,6 +48,7 @@ if _env.exists():
 API_KEY        = os.getenv("GEMINI_API_KEY") or "AIzaSyBT4Ab9uabmtcZSZmK2xs6C5QwGic_dj1A"
 MODEL          = "gemini-2.5-flash"
 SHORTCUTS_FILE = Path(__file__).parent / "shortcuts.json"
+MEMORY_FILE    = Path(__file__).parent / "memory.json"
 
 SAMPLE_RATE       = 16000
 SILENCE_THRESHOLD = 0.018
@@ -66,29 +67,28 @@ C_DONE   = QColor("#30D158")
 C_BUBBLE = QColor("#1C1C1E")
 
 # ── System prompt ─────────────────────────────────────────────────────────────
-SYSTEM_BASE = """Eres AITA, el asistente personal de Esteban en su Mac.
+SYSTEM_BASE = """Eres AITA, asistente personal de Esteban en su Mac.
 
-Hablas en español. Eres cálido, paciente y claro. Usas "Esteban" ocasionalmente.
-Respuestas cortas, máximo 2 frases. Sin tecnicismos.
+ESTILO: español, cálido y claro. Máximo 2 frases por respuesta. Sin tecnicismos. Usa "Esteban" de vez en cuando.
 
-HERRAMIENTAS:
-- open_thing(target): abre apps ("el correo", "fotos", "safari"), carpetas o URLs.
-- create_folder(name, location): crea una carpeta. Por defecto en el Escritorio.
-- explain_screen(): captura la pantalla y explica qué hay en ella.
-- open_press(): abre El Correo, Marca y El Confidencial sin muros de pago.
-- web_search(query): busca en Google y abre los resultados.
-- set_volume(action): controla el volumen. Acciones: "subir", "bajar", "silenciar", "máximo", "normal".
-- save_shortcut(trigger, description): guarda un atajo de voz nuevo.
-  Úsala cuando Esteban diga "quiero que cuando diga X hagas Y" o "crea un atajo para X".
-  'trigger' es la frase que dirá Esteban. 'description' es lo que debe hacer AITA.
-  Ejemplo: "cuando diga 'trabajo' abre Word y la carpeta Proyectos"
-    → save_shortcut(trigger="trabajo", description="abre Microsoft Word y la carpeta Proyectos")
-- list_shortcuts(): muestra todos los atajos personalizados guardados.
-  Úsala cuando Esteban diga "qué atajos tengo", "mis atajos", etc.
-- delete_shortcut(trigger): elimina un atajo personalizado.
-  Úsala cuando Esteban diga "quita el atajo de X" o "borra el atajo X".
+HERRAMIENTAS — cuándo usar cada una:
+• open_thing(target) → abrir apps, carpetas, archivos o URLs. Target puede ser nombre natural ("el correo", "fotos") o ruta.
+• create_folder(name, location) → crear carpeta nueva. Ubicación por defecto: Escritorio.
+• explain_screen() → capturar pantalla y explicar qué hay. Usar cuando Esteban no entiende algo que ve.
+• open_press() → abrir El Correo, Marca y El Confidencial sin publicidad. Trigger: "prensa", "periódicos", "noticias".
+• web_search(query) → buscar en Google. Usar cuando quiere información de internet.
+• set_volume(action) → volumen del Mac. Acciones: subir · bajar · silenciar · máximo · normal.
+• save_shortcut(trigger, description) → guardar atajo de voz. Usar cuando diga "cuando diga X haz Y" o "crea un atajo para X".
+• list_shortcuts() → listar atajos guardados. Trigger: "mis atajos", "qué atajos tengo".
+• delete_shortcut(trigger) → borrar un atajo.
+• remember(topic, info) → guardar en memoria algo duradero y útil.
+  GUARDAR cuando: Esteban dice "recuerda que..." / comparte teléfono, nombre, dirección, contraseña, preferencia personal, fecha importante.
+  NO GUARDAR: peticiones normales ("abre el correo"), preguntas puntuales, cosas ya guardadas.
+  topic = categoría corta ("médico", "WiFi", "cumpleaños Ana"). info = dato completo.
+• recall() → mostrar todo lo guardado en memoria. Trigger: "qué recuerdas", "qué tienes guardado".
+• forget(topic) → borrar algo de la memoria. Trigger: "olvida que...", "borra que...".
 
-REGLA: actúa directamente, sin pedir confirmación. Si algo falla, explícalo con palabras sencillas."""
+REGLAS: actúa siempre sin pedir confirmación. Si algo falla, explícalo con palabras sencillas."""
 
 
 # ── Atajos personalizados (shortcuts.json) ────────────────────────────────────
@@ -105,16 +105,40 @@ def _save_custom_shortcuts(data: dict[str, str]) -> None:
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+# ── Memoria persistente (memory.json) ─────────────────────────────────────────
+def _load_memory() -> dict[str, str]:
+    try:
+        if MEMORY_FILE.exists():
+            return json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_memory(data: dict[str, str]) -> None:
+    MEMORY_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
 def _build_system() -> str:
-    """System prompt base + atajos personalizados actuales de Esteban."""
+    """System prompt con memoria y atajos personalizados de Esteban."""
+    parts = [SYSTEM_BASE]
+
+    memory = _load_memory()
+    if memory:
+        lines = ["\nLO QUE AITA RECUERDA DE ESTEBAN (úsalo cuando sea relevante):"]
+        for topic, info in memory.items():
+            lines.append(f"  • {topic}: {info}")
+        parts.append("\n".join(lines))
+
     custom = _load_custom_shortcuts()
-    if not custom:
-        return SYSTEM_BASE
-    lines = ["\nATAJOS PERSONALIZADOS DE ESTEBAN:",
-             "Si Esteban dice una de estas frases (o algo muy parecido), ejecuta la acción indicada:"]
-    for phrase, action in custom.items():
-        lines.append(f'  • "{phrase}" → {action}')
-    return SYSTEM_BASE + "\n".join(lines)
+    if custom:
+        lines = ["\nATAJOS PERSONALIZADOS DE ESTEBAN:",
+                 "Si Esteban dice una de estas frases (o algo muy parecido), ejecuta la acción:"]
+        for phrase, action in custom.items():
+            lines.append(f'  • "{phrase}" → {action}')
+        parts.append("\n".join(lines))
+
+    return "\n".join(parts)
 
 # ── Mapeo de nombres naturales → app real ─────────────────────────────────────
 APP_ALIASES: dict[str, str] = {
@@ -246,6 +270,39 @@ TOOL_DECLS = [
             required=["trigger"],
         ),
     ),
+    gt.FunctionDeclaration(
+        name="remember",
+        description=(
+            "Guarda en memoria algo útil y duradero sobre Esteban: "
+            "teléfonos, nombres importantes, preferencias, contraseñas, fechas clave. "
+            "NO usar para peticiones normales del día a día."
+        ),
+        parameters=gt.Schema(
+            type=gt.Type.OBJECT,
+            properties={
+                "topic": gt.Schema(type=gt.Type.STRING,
+                         description="Categoría breve (ej: 'médico', 'WiFi', 'cumpleaños nieto')"),
+                "info":  gt.Schema(type=gt.Type.STRING,
+                         description="Información completa a recordar"),
+            },
+            required=["topic", "info"],
+        ),
+    ),
+    gt.FunctionDeclaration(
+        name="recall",
+        description="Muestra todo lo que AITA recuerda de Esteban.",
+        parameters=gt.Schema(type=gt.Type.OBJECT, properties={}),
+    ),
+    gt.FunctionDeclaration(
+        name="forget",
+        description="Olvida algo guardado en memoria.",
+        parameters=gt.Schema(
+            type=gt.Type.OBJECT,
+            properties={"topic": gt.Schema(type=gt.Type.STRING,
+                        description="Tema a olvidar")},
+            required=["topic"],
+        ),
+    ),
 ]
 
 # ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -350,6 +407,42 @@ def delete_shortcut(trigger: str) -> str:
         return f"No pude eliminar el atajo: {e}"
 
 
+def remember(topic: str, info: str) -> str:
+    try:
+        data = _load_memory()
+        data[topic.strip()] = info.strip()
+        _save_memory(data)
+        return f"Guardado en memoria: {topic} → {info}"
+    except Exception as e:
+        return f"No pude guardar en memoria: {e}"
+
+
+def recall() -> str:
+    data = _load_memory()
+    if not data:
+        return "Todavía no tengo nada guardado sobre ti, Esteban."
+    lines = [f"Esto es lo que recuerdo ({len(data)} cosa(s)):"]
+    for topic, info in data.items():
+        lines.append(f"• {topic}: {info}")
+    return "\n".join(lines)
+
+
+def forget(topic: str) -> str:
+    try:
+        data = _load_memory()
+        key  = topic.strip()
+        if key in data:
+            del data[key]
+            _save_memory(data)
+            return f"Ya no recuerdo nada sobre \"{key}\"."
+        similar = [k for k in data if topic.lower() in k.lower() or k.lower() in topic.lower()]
+        if similar:
+            return f"No encontré \"{topic}\" exactamente. ¿Querías que olvidara: {', '.join(similar)}?"
+        return f"No tenía nada guardado sobre \"{topic}\"."
+    except Exception as e:
+        return f"No pude borrar el recuerdo: {e}"
+
+
 def set_volume(action: str) -> str:
     try:
         a = action.lower().strip()
@@ -448,6 +541,9 @@ HANDLERS = {
     "save_shortcut":   lambda **kw: save_shortcut(**kw),
     "list_shortcuts":  lambda **kw: list_shortcuts(),
     "delete_shortcut": lambda **kw: delete_shortcut(**kw),
+    "remember":        lambda **kw: remember(**kw),
+    "recall":          lambda **kw: recall(),
+    "forget":          lambda **kw: forget(**kw),
 }
 
 # ── Gemini worker ─────────────────────────────────────────────────────────────
