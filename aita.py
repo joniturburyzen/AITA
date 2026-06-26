@@ -45,8 +45,9 @@ if _env.exists():
         load_dotenv(_env)
     except Exception:
         pass
-API_KEY = os.getenv("GEMINI_API_KEY") or "AIzaSyBT4Ab9uabmtcZSZmK2xs6C5QwGic_dj1A"
-MODEL   = "gemini-2.5-flash"
+API_KEY        = os.getenv("GEMINI_API_KEY") or "AIzaSyBT4Ab9uabmtcZSZmK2xs6C5QwGic_dj1A"
+MODEL          = "gemini-2.5-flash"
+SHORTCUTS_FILE = Path(__file__).parent / "shortcuts.json"
 
 SAMPLE_RATE       = 16000
 SILENCE_THRESHOLD = 0.018
@@ -65,7 +66,7 @@ C_DONE   = QColor("#30D158")
 C_BUBBLE = QColor("#1C1C1E")
 
 # ── System prompt ─────────────────────────────────────────────────────────────
-SYSTEM = """Eres AITA, el asistente personal de Esteban en su Mac.
+SYSTEM_BASE = """Eres AITA, el asistente personal de Esteban en su Mac.
 
 Hablas en español. Eres cálido, paciente y claro. Usas "Esteban" ocasionalmente.
 Respuestas cortas, máximo 2 frases. Sin tecnicismos.
@@ -76,10 +77,44 @@ HERRAMIENTAS:
 - explain_screen(): captura la pantalla y explica qué hay en ella.
 - open_press(): abre El Correo, Marca y El Confidencial sin muros de pago.
 - web_search(query): busca en Google y abre los resultados.
-  Ejemplo: "busca fotos del Athletic" → web_search(query="fotos Athletic Club").
 - set_volume(action): controla el volumen. Acciones: "subir", "bajar", "silenciar", "máximo", "normal".
+- save_shortcut(trigger, description): guarda un atajo de voz nuevo.
+  Úsala cuando Esteban diga "quiero que cuando diga X hagas Y" o "crea un atajo para X".
+  'trigger' es la frase que dirá Esteban. 'description' es lo que debe hacer AITA.
+  Ejemplo: "cuando diga 'trabajo' abre Word y la carpeta Proyectos"
+    → save_shortcut(trigger="trabajo", description="abre Microsoft Word y la carpeta Proyectos")
+- list_shortcuts(): muestra todos los atajos personalizados guardados.
+  Úsala cuando Esteban diga "qué atajos tengo", "mis atajos", etc.
+- delete_shortcut(trigger): elimina un atajo personalizado.
+  Úsala cuando Esteban diga "quita el atajo de X" o "borra el atajo X".
 
 REGLA: actúa directamente, sin pedir confirmación. Si algo falla, explícalo con palabras sencillas."""
+
+
+# ── Atajos personalizados (shortcuts.json) ────────────────────────────────────
+def _load_custom_shortcuts() -> dict[str, str]:
+    try:
+        if SHORTCUTS_FILE.exists():
+            return json.loads(SHORTCUTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_custom_shortcuts(data: dict[str, str]) -> None:
+    SHORTCUTS_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+def _build_system() -> str:
+    """System prompt base + atajos personalizados actuales de Esteban."""
+    custom = _load_custom_shortcuts()
+    if not custom:
+        return SYSTEM_BASE
+    lines = ["\nATAJOS PERSONALIZADOS DE ESTEBAN:",
+             "Si Esteban dice una de estas frases (o algo muy parecido), ejecuta la acción indicada:"]
+    for phrase, action in custom.items():
+        lines.append(f'  • "{phrase}" → {action}')
+    return SYSTEM_BASE + "\n".join(lines)
 
 # ── Mapeo de nombres naturales → app real ─────────────────────────────────────
 APP_ALIASES: dict[str, str] = {
@@ -178,6 +213,39 @@ TOOL_DECLS = [
             required=["action"],
         ),
     ),
+    gt.FunctionDeclaration(
+        name="save_shortcut",
+        description=(
+            "Guarda un atajo de voz personalizado de Esteban. "
+            "'trigger' es la frase que dirá Esteban. "
+            "'description' es la instrucción que debe ejecutarse cuando la diga."
+        ),
+        parameters=gt.Schema(
+            type=gt.Type.OBJECT,
+            properties={
+                "trigger":     gt.Schema(type=gt.Type.STRING,
+                               description="Frase que dirá Esteban (en minúsculas)"),
+                "description": gt.Schema(type=gt.Type.STRING,
+                               description="Qué hacer cuando Esteban diga esa frase"),
+            },
+            required=["trigger", "description"],
+        ),
+    ),
+    gt.FunctionDeclaration(
+        name="list_shortcuts",
+        description="Muestra todos los atajos de voz personalizados que tiene guardados Esteban.",
+        parameters=gt.Schema(type=gt.Type.OBJECT, properties={}),
+    ),
+    gt.FunctionDeclaration(
+        name="delete_shortcut",
+        description="Elimina un atajo de voz personalizado de Esteban.",
+        parameters=gt.Schema(
+            type=gt.Type.OBJECT,
+            properties={"trigger": gt.Schema(type=gt.Type.STRING,
+                        description="Frase del atajo a eliminar")},
+            required=["trigger"],
+        ),
+    ),
 ]
 
 # ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -242,6 +310,44 @@ def web_search(query: str) -> str:
         return f"Buscando '{query}' en Google."
     except Exception as e:
         return f"No pude abrir la búsqueda: {e}"
+
+
+def save_shortcut(trigger: str, description: str) -> str:
+    try:
+        data = _load_custom_shortcuts()
+        key  = trigger.lower().strip()
+        data[key] = description.strip()
+        _save_custom_shortcuts(data)
+        return f"¡Listo! Cuando digas \"{key}\", haré: {description}."
+    except Exception as e:
+        return f"No pude guardar el atajo: {e}"
+
+
+def list_shortcuts() -> str:
+    data = _load_custom_shortcuts()
+    if not data:
+        return "Aún no tienes atajos personalizados. Puedes crear uno diciendo: \"cuando diga X, haz Y\"."
+    lines = [f"Tienes {len(data)} atajo(s) guardado(s):"]
+    for phrase, action in data.items():
+        lines.append(f'• "{phrase}" → {action}')
+    return "\n".join(lines)
+
+
+def delete_shortcut(trigger: str) -> str:
+    try:
+        data = _load_custom_shortcuts()
+        key  = trigger.lower().strip()
+        if key in data:
+            del data[key]
+            _save_custom_shortcuts(data)
+            return f"Atajo \"{key}\" eliminado."
+        # Búsqueda aproximada por si el nombre no coincide exactamente
+        similar = [k for k in data if trigger.lower() in k or k in trigger.lower()]
+        if similar:
+            return f"No encontré \"{trigger}\" exactamente. ¿Querías borrar: {', '.join(similar)}?"
+        return f"No encontré ningún atajo con ese nombre."
+    except Exception as e:
+        return f"No pude eliminar el atajo: {e}"
 
 
 def set_volume(action: str) -> str:
@@ -333,12 +439,15 @@ SHORTCUTS: dict[str, callable] = {
 }
 
 HANDLERS = {
-    "open_thing":     lambda **kw: open_thing(**kw),
-    "create_folder":  lambda **kw: create_folder(**kw),
-    "explain_screen": lambda **kw: explain_screen(**kw),
-    "open_press":     lambda **kw: open_press(),
-    "web_search":     lambda **kw: web_search(**kw),
-    "set_volume":     lambda **kw: set_volume(**kw),
+    "open_thing":      lambda **kw: open_thing(**kw),
+    "create_folder":   lambda **kw: create_folder(**kw),
+    "explain_screen":  lambda **kw: explain_screen(**kw),
+    "open_press":      lambda **kw: open_press(),
+    "web_search":      lambda **kw: web_search(**kw),
+    "set_volume":      lambda **kw: set_volume(**kw),
+    "save_shortcut":   lambda **kw: save_shortcut(**kw),
+    "list_shortcuts":  lambda **kw: list_shortcuts(),
+    "delete_shortcut": lambda **kw: delete_shortcut(**kw),
 }
 
 # ── Gemini worker ─────────────────────────────────────────────────────────────
@@ -347,17 +456,19 @@ class GeminiWorker(QThread):
     error = Signal(str)
 
     def __init__(self, message: str, audio_path: str | None = None,
-                 history: list[tuple[str, str]] | None = None):
+                 history: list[tuple[str, str]] | None = None,
+                 system: str | None = None):
         super().__init__()
         self._message    = message
         self._audio_path = audio_path
         self._history    = history or []
+        self._system     = system or SYSTEM_BASE
 
     def run(self):
         try:
             client = genai.Client(api_key=API_KEY)
             config = gt.GenerateContentConfig(
-                system_instruction=SYSTEM,
+                system_instruction=self._system,
                 tools=[gt.Tool(function_declarations=TOOL_DECLS)],
                 temperature=0.7,
             )
@@ -763,11 +874,19 @@ class AitaWindow(QWidget):
         self._run_gemini(message="", audio_path=wav_path)
 
     def _on_text(self, text: str):
-        fn = SHORTCUTS.get(text.strip().lower())
+        key = text.strip().lower()
+        # 1. Atajos predefinidos (sin pasar por Gemini, respuesta instantánea)
+        fn = SHORTCUTS.get(key)
         if fn:
             self._bubble.show_response(fn())
             self._reposition_bubble()
             return
+        # 2. Atajos personalizados de Esteban (envía la acción guardada a Gemini)
+        custom = _load_custom_shortcuts()
+        if key in custom:
+            self._run_gemini(message=custom[key])
+            return
+        # 3. Pregunta libre
         self._run_gemini(message=text)
 
     def _run_gemini(self, message: str, audio_path: str | None = None):
@@ -776,7 +895,7 @@ class AitaWindow(QWidget):
         self._set_color(C_THINK)
         self._bubble.show_thinking()
         self._reposition_bubble()
-        self._worker = GeminiWorker(message, audio_path, list(self._history))
+        self._worker = GeminiWorker(message, audio_path, list(self._history), _build_system())
         self._worker.done.connect(self._on_response)
         self._worker.error.connect(self._on_error)
         self._worker.start()
