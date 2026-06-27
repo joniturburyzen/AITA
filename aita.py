@@ -677,7 +677,7 @@ class BubbleWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window | Qt.FramelessWindowHint |
-                         Qt.WindowStaysOnTopHint | Qt.Tool)
+                         Qt.WindowStaysOnTopHint)
         import sys as _sys
         self._transparent = not (_sys.platform == "darwin" and _sys.version_info < (3, 10))
         if self._transparent:
@@ -804,7 +804,7 @@ DOT_R      = 10
 class AitaWindow(QWidget):
     def __init__(self):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint |
-                         Qt.WindowStaysOnTopHint | Qt.Tool |
+                         Qt.WindowStaysOnTopHint |
                          Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         import sys as _sys
